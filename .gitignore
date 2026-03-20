@@ -1,0 +1,30 @@
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+
+# ── SQLite database file (auto-generated at runtime from seed data) ───────────
+server/insights.db
+server/insights.db-shm
+server/insights.db-wal
+
+# ── Vite / Build output ───────────────────────────────────────────────────────
+dist/
+dist-ssr/
+*.local
+
+# ── Environment variables ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── OS & Editor artifacts ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+!.vscode/extensions.json
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
