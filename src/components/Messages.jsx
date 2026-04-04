@@ -84,6 +84,7 @@ export function AssistantDataMessage({ message }) {
             sql={message.sql}
             python={message.python}
             tableData={message.tableData}
+            chartConfig={message.chartConfig}
           />
         </div>
 

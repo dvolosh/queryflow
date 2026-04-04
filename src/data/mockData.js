@@ -1,51 +1,52 @@
-// Shared mock data for QueryFlow chat UI demo
+// ── Sample data matching the real InsightsDB schema ──────────────────────────
+
 export const SAMPLE_SQL = `SELECT
-  r.product_category,
-  AVG(r.star_rating)          AS avg_rating,
-  COUNT(r.review_id)          AS review_count,
-  SUM(CASE WHEN r.star_rating <= 2 THEN 1 ELSE 0 END) AS neg_reviews
-FROM reviews r
-JOIN products p ON r.product_id = p.id
-WHERE p.launched_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
-GROUP BY r.product_category
-ORDER BY neg_reviews DESC
-LIMIT 20;`;
+  p.name                                   AS product_name,
+  ROUND(AVG(r.rating), 2)                  AS avg_rating,
+  COUNT(r.review_id)                       AS review_count,
+  SUM(CASE WHEN r.rating <= 2 THEN 1 ELSE 0 END) AS negative_reviews
+FROM Reviews r
+JOIN Products p ON r.product_id = p.product_id
+GROUP BY p.product_id, p.name
+ORDER BY negative_reviews DESC
+LIMIT 10;`;
 
-export const SAMPLE_PYTHON = `import pandas as pd
-import plotly.express as px
-
-# df is injected by QueryFlow runtime
-fig = px.bar(
-    df,
-    x="product_category",
-    y="neg_reviews",
-    color="avg_rating",
-    color_continuous_scale="RdYlGn",
-    labels={
-        "product_category": "Category",
-        "neg_reviews": "Negative Reviews",
-        "avg_rating": "Avg Rating",
-    },
-    title="Negative Reviews by Category (Last 90 Days)",
-    template="plotly_dark",
-)
-fig.update_layout(
-    plot_bgcolor="rgba(0,0,0,0)",
-    paper_bgcolor="rgba(0,0,0,0)",
-    font_color="#e2e8f0",
-)
-fig.show()`;
+// Legacy Python block — kept for backward compat with old mock messages only.
+// New messages from the real pipeline use chartConfig instead.
+export const SAMPLE_PYTHON = `# Legacy: real pipeline now outputs Chart.js JSON config\nimport plotly.express as px\nfig = px.bar(df, x="product_name", y="negative_reviews")\nfig.show()`;
 
 export const SAMPLE_TABLE_DATA = {
-  columns: ['product_category', 'avg_rating', 'review_count', 'neg_reviews'],
+  columns: ['product_name', 'avg_rating', 'review_count', 'negative_reviews'],
   rows: [
-    ['Electronics', 3.2, 1420, 312],
-    ['Home & Garden', 3.8, 890, 198],
-    ['Sports', 4.1, 654, 87],
-    ['Clothing', 3.5, 2100, 420],
-    ['Books', 4.6, 330, 22],
-    ['Toys', 3.9, 445, 91],
-    ['Beauty', 4.2, 780, 67],
+    ['Basic Earbuds',         1.33, 3, 2],
+    ['LuxChair Executive',    3.00, 2, 1],
+    ['ProSound Headphones',   3.33, 3, 1],
+    ['ErgoDesk',              3.50, 2, 1],
+    ['AirPurifier X3',        3.50, 2, 0],
+    ['UltraWatch v2',         4.00, 3, 0],
+    ['SmartSpeaker Pro',      4.50, 2, 0],
+    ['MechKey 650',           4.50, 2, 0],
+  ],
+  rowCount: 8,
+  elapsed: 3,
+};
+
+// Chart.js config for the sample data above — renders a real chart in DataBlock
+export const SAMPLE_CHART_CONFIG = {
+  type: 'bar',
+  title: 'Negative Reviews by Product',
+  labels: SAMPLE_TABLE_DATA.rows.map(r => r[0]),
+  datasets: [
+    {
+      label: 'Negative Reviews (≤ 2 stars)',
+      data: SAMPLE_TABLE_DATA.rows.map(r => r[3]),
+      backgroundColor: '#f43f5e',
+    },
+    {
+      label: 'Avg Rating',
+      data: SAMPLE_TABLE_DATA.rows.map(r => r[1]),
+      backgroundColor: '#6366f1',
+    },
   ],
 };
 
@@ -54,63 +55,52 @@ export const INITIAL_MESSAGES = [
     id: '1',
     role: 'assistant',
     type: 'text',
-    content: "Hello! I'm **QueryFlow**, your AI data analyst. I'm connected to your product database and ready to help you uncover insights. Try asking me something like:\n\n- *\"What features do 1-star reviews mention most?\"*\n- *\"Show me revenue trends by category this quarter\"*\n- *\"Which products have the highest return rates?\"*",
+    content: "Hello! I'm **QueryFlow**, your AI data analyst. I'm connected to **InsightsDB** — a database of customers, products, reviews, and sales. Try asking me:\n\n- *\"Which products have the most negative reviews?\"*\n- *\"Show me total revenue per product category\"*\n- *\"Who are our churned Enterprise customers?\"*",
     timestamp: new Date(Date.now() - 5 * 60000),
   },
   {
     id: '2',
     role: 'user',
     type: 'text',
-    content: 'Show me which product categories have the most negative reviews in the last 90 days.',
+    content: 'Which products have the most negative reviews?',
     timestamp: new Date(Date.now() - 4 * 60000),
   },
   {
     id: '3',
     role: 'assistant',
     type: 'data_block',
-    content: 'Here are the product categories ranked by negative review count over the last 90 days. **Clothing** and **Electronics** stand out with the highest volume of reviews rated 2 stars or below.',
-    sql: SAMPLE_SQL,
-    python: SAMPLE_PYTHON,
-    tableData: SAMPLE_TABLE_DATA,
+    content: '**Basic Earbuds** and **LuxChair Executive** top the list for negative reviews. Basic Earbuds has an average rating of 1.33 — well below acceptable. The chart groups negative reviews (≤ 2 stars) alongside average rating per product.',
+    sql:         SAMPLE_SQL,
+    tableData:   SAMPLE_TABLE_DATA,
+    chartConfig: SAMPLE_CHART_CONFIG,
     timestamp: new Date(Date.now() - 3 * 60000),
   },
   {
     id: '4',
     role: 'user',
     type: 'text',
-    content: 'What features do the most negative reviews mention?',
+    content: 'What do the most negative reviews actually say?',
     timestamp: new Date(Date.now() - 2 * 60000),
   },
   {
     id: '5',
     role: 'assistant',
     type: 'ambiguity',
-    content: 'I want to make sure I surface the most relevant insights. When you say **"most negative"**, do you mean:',
+    content: 'I want to make sure I surface the most relevant reviews. When you say **"most negative"**, do you mean:',
     clarificationOptions: [
-      { id: 'a', label: '1-star reviews only', icon: '⭐' },
-      { id: 'b', label: '1 & 2-star reviews', icon: '📉' },
-      { id: 'c', label: 'Sentiment score < –0.5', icon: '🤖' },
-      { id: 'd', label: 'Any negative keyword', icon: '🔍' },
+      { id: 'a', label: '1-star reviews only',   icon: '⭐' },
+      { id: 'b', label: '1 & 2-star reviews',    icon: '📉' },
+      { id: 'c', label: 'Lowest-rated product',   icon: '🔍' },
     ],
     timestamp: new Date(Date.now() - 1 * 60000),
   },
 ];
 
-export const CHAT_HISTORY = [
-  { id: 'h1', title: 'Negative Review Categories', preview: '90-day category breakdown', date: 'Today', active: true },
-  { id: 'h2', title: 'Revenue by Region Q1', preview: 'Bar chart & table view', date: 'Today', active: false },
-  { id: 'h3', title: 'Churn Prediction Factors', preview: 'ML feature importance', date: 'Yesterday', active: false },
-  { id: 'h4', title: 'Top SKUs by Return Rate', preview: 'Electronics top offenders', date: 'Yesterday', active: false },
-  { id: 'h5', title: 'Monthly Active Users', preview: 'Growth trend since Jan', date: 'Mar 17', active: false },
-  { id: 'h6', title: 'Inventory Turnover Ratio', preview: 'Supply chain analysis', date: 'Mar 15', active: false },
-  { id: 'h7', title: 'Customer LTV Cohorts', preview: 'Retention & monetization', date: 'Mar 12', active: false },
-];
 
 export const EXECUTION_STEPS = [
-  'Parsing query...',
-  'Generating SQL...',
-  'Executing SQL...',
-  'Fetching results...',
-  'Generating visualization...',
-  'Rendering chart...',
+  '🔍 Analyst — evaluating intent...',
+  '🗄️  DB Manager — writing SQL...',
+  '⚙️  Executing query against InsightsDB...',
+  '📊 Visualizer — designing chart...',
+  '✅ Rendering results...',
 ];
