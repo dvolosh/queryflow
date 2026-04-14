@@ -11,6 +11,7 @@ import {
   deleteConversation,
   loadConversationMessages,
   saveMessage,
+  updateMessage,
 } from './data/api';
 import { Database, ChevronDown } from 'lucide-react';
 
@@ -25,7 +26,7 @@ function HeaderBar({ activeTitle }) {
         {activeTitle && (
           <>
             <span className="text-slate-600">·</span>
-            <span className="text-xs text-slate-500">InsightsDB</span>
+            <span className="text-xs text-slate-500">ChinookDB</span>
           </>
         )}
       </div>
@@ -33,7 +34,7 @@ function HeaderBar({ activeTitle }) {
       <div className="flex items-center gap-3">
         <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-slate-800 transition-colors group">
           <Database size={13} className="text-teal-400" />
-          <span className="text-xs text-slate-400 group-hover:text-slate-300">InsightsDB</span>
+          <span className="text-xs text-slate-400 group-hover:text-slate-300">ChinookDB</span>
           <ChevronDown size={12} className="text-slate-600" />
         </button>
         <div className="flex items-center gap-1.5">
@@ -168,6 +169,7 @@ export default function App() {
       sql:         result.sql,
       tableData:   result.tableData,
       chartConfig: result.chartConfig,
+      vizJson:     result.vizJson ?? result.chartConfig,  // stateful viz source-of-truth
       timestamp:   new Date(),
     };
   }
@@ -233,7 +235,7 @@ export default function App() {
         id:        crypto.randomUUID(),
         role:      'assistant',
         type:      'text',
-        content:   `⚠️ **Pipeline error:** ${err.message}\n\nMake sure Ollama is running \`qwen3.5:latest\` on port 11434.`,
+        content:   `⚠️ **Pipeline error:** ${err.message}\n\nMake sure Ollama is running \`gemma4:e4b\` on port 11434.`,
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, errMsg]);
@@ -241,6 +243,29 @@ export default function App() {
     } finally {
       setIsLoading(false);
       setExecutionStep('');
+    }
+  }
+
+  // ── Handle viz tweak updates (persists updated vizJson) ─────────────────────
+  function handleVizUpdate(msgId, newVizJson) {
+    // 1. Update in-memory state immediately so the chart re-renders
+    let updatedMsg = null;
+    setMessages(prev =>
+      prev.map(m => {
+        if (m.id !== msgId) return m;
+        updatedMsg = { ...m, vizJson: newVizJson, chartConfig: newVizJson };
+        return updatedMsg;
+      })
+    );
+
+    // 2. Persist via PUT (UPDATE) so it survives conversation reloads.
+    //    We cannot rely on the stale `messages` snapshot captured in this
+    //    closure, so we rebuild the payload directly.
+    const convId = activeConvIdRef.current;
+    if (convId && updatedMsg) {
+      updateMessage(convId, updatedMsg).catch(err =>
+        console.warn('[App] updateMessage failed:', err.message)
+      );
     }
   }
 
@@ -289,6 +314,7 @@ export default function App() {
           isLoading={isLoading}
           executionStep={executionStep}
           onClarify={handleClarify}
+          onVizUpdate={handleVizUpdate}
         />
         <InputBar
           onSend={handleSend}

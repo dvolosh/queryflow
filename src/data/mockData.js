@@ -1,106 +1,87 @@
-// ── Sample data matching the real InsightsDB schema ──────────────────────────
+// ── Sample data matching the ChinookDB schema ─────────────────────────────────
 
 export const SAMPLE_SQL = `SELECT
-  p.name                                   AS product_name,
-  ROUND(AVG(r.rating), 2)                  AS avg_rating,
-  COUNT(r.review_id)                       AS review_count,
-  SUM(CASE WHEN r.rating <= 2 THEN 1 ELSE 0 END) AS negative_reviews
-FROM Reviews r
-JOIN Products p ON r.product_id = p.product_id
-GROUP BY p.product_id, p.name
-ORDER BY negative_reviews DESC
+  g.Name                                     AS genre,
+  ROUND(SUM(il.UnitPrice * il.Quantity), 2)  AS total_revenue,
+  COUNT(DISTINCT t.TrackId)                  AS track_count
+FROM InvoiceLine il
+JOIN Track t   ON il.TrackId   = t.TrackId
+JOIN Genre g   ON t.GenreId    = g.GenreId
+GROUP BY g.GenreId, g.Name
+ORDER BY total_revenue DESC
 LIMIT 10;`;
 
 // Legacy Python block — kept for backward compat with old mock messages only.
-// New messages from the real pipeline use chartConfig instead.
-export const SAMPLE_PYTHON = `# Legacy: real pipeline now outputs Chart.js JSON config\nimport plotly.express as px\nfig = px.bar(df, x="product_name", y="negative_reviews")\nfig.show()`;
+export const SAMPLE_PYTHON = `# Legacy: real pipeline now outputs Chart.js JSON config\n# ChinookDB revenue by genre`;
 
 export const SAMPLE_TABLE_DATA = {
-  columns: ['product_name', 'avg_rating', 'review_count', 'negative_reviews'],
+  columns: ['genre', 'total_revenue', 'track_count'],
   rows: [
-    ['Basic Earbuds',         1.33, 3, 2],
-    ['LuxChair Executive',    3.00, 2, 1],
-    ['ProSound Headphones',   3.33, 3, 1],
-    ['ErgoDesk',              3.50, 2, 1],
-    ['AirPurifier X3',        3.50, 2, 0],
-    ['UltraWatch v2',         4.00, 3, 0],
-    ['SmartSpeaker Pro',      4.50, 2, 0],
-    ['MechKey 650',           4.50, 2, 0],
+    ['Rock',              826.65, 1297],
+    ['Latin',             382.14,  739],
+    ['Metal',             261.36,  374],
+    ['Alternative & Punk',241.56,  332],
+    ['Jazz',              168.71,  130],
+    ['Blues',             132.45,  81 ],
+    ['TV Shows',          93.53,   93 ],
+    ['Classical',         92.34,   74 ],
+    ['R&B/Soul',          60.99,   61 ],
+    ['Reggae',            29.70,   58 ],
   ],
-  rowCount: 8,
-  elapsed: 3,
+  rowCount: 10,
+  elapsed: 4,
 };
 
-// Chart.js config for the sample data above — renders a real chart in DataBlock
 export const SAMPLE_CHART_CONFIG = {
   type: 'bar',
-  title: 'Negative Reviews by Product',
+  title: 'Total Revenue by Genre (Top 10)',
   labels: SAMPLE_TABLE_DATA.rows.map(r => r[0]),
   datasets: [
     {
-      label: 'Negative Reviews (≤ 2 stars)',
-      data: SAMPLE_TABLE_DATA.rows.map(r => r[3]),
-      backgroundColor: '#f43f5e',
-    },
-    {
-      label: 'Avg Rating',
+      label: 'Revenue ($)',
       data: SAMPLE_TABLE_DATA.rows.map(r => r[1]),
       backgroundColor: '#6366f1',
+    },
+    {
+      label: 'Track Count',
+      data: SAMPLE_TABLE_DATA.rows.map(r => r[2]),
+      backgroundColor: '#14b8a6',
     },
   ],
 };
 
 export const INITIAL_MESSAGES = [
   {
-    id: '1',
+    id: 'welcome',
     role: 'assistant',
     type: 'text',
-    content: "Hello! I'm **QueryFlow**, your AI data analyst. I'm connected to **InsightsDB** — a database of customers, products, reviews, and sales. Try asking me:\n\n- *\"Which products have the most negative reviews?\"*\n- *\"Show me total revenue per product category\"*\n- *\"Who are our churned Enterprise customers?\"*",
+    content: "Hello! I'm **QueryFlow**, your AI data analyst. I'm connected to **ChinookDB** — a digital music store with Artists, Albums, Tracks, Genres, Invoices, and Customers. Try asking me:\n\n- *\"Show total revenue by genre\"*\n- *\"Which artists have the most albums?\"*\n- *\"What are the top 5 selling tracks this year?\"*\n- *\"Show me monthly invoice revenue as a line chart\"*",
     timestamp: new Date(Date.now() - 5 * 60000),
   },
   {
     id: '2',
     role: 'user',
     type: 'text',
-    content: 'Which products have the most negative reviews?',
+    content: 'Show me total revenue by genre',
     timestamp: new Date(Date.now() - 4 * 60000),
   },
   {
     id: '3',
     role: 'assistant',
     type: 'data_block',
-    content: '**Basic Earbuds** and **LuxChair Executive** top the list for negative reviews. Basic Earbuds has an average rating of 1.33 — well below acceptable. The chart groups negative reviews (≤ 2 stars) alongside average rating per product.',
+    content: '**Rock** dominates with $826.65 in revenue across 1,297 tracks — more than double the second-place genre, Latin. Classical and Blues punch above their weight relative to track count.',
     sql:         SAMPLE_SQL,
     tableData:   SAMPLE_TABLE_DATA,
     chartConfig: SAMPLE_CHART_CONFIG,
+    vizJson:     SAMPLE_CHART_CONFIG,
     timestamp: new Date(Date.now() - 3 * 60000),
   },
-  {
-    id: '4',
-    role: 'user',
-    type: 'text',
-    content: 'What do the most negative reviews actually say?',
-    timestamp: new Date(Date.now() - 2 * 60000),
-  },
-  {
-    id: '5',
-    role: 'assistant',
-    type: 'ambiguity',
-    content: 'I want to make sure I surface the most relevant reviews. When you say **"most negative"**, do you mean:',
-    clarificationOptions: [
-      { id: 'a', label: '1-star reviews only',   icon: '⭐' },
-      { id: 'b', label: '1 & 2-star reviews',    icon: '📉' },
-      { id: 'c', label: 'Lowest-rated product',   icon: '🔍' },
-    ],
-    timestamp: new Date(Date.now() - 1 * 60000),
-  },
 ];
-
 
 export const EXECUTION_STEPS = [
   '🔍 Analyst — evaluating intent...',
   '🗄️  DB Manager — writing SQL...',
-  '⚙️  Executing query against InsightsDB...',
+  '⚙️  Executing query against ChinookDB...',
   '📊 Visualizer — designing chart...',
   '✅ Rendering results...',
 ];

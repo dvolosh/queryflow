@@ -66,7 +66,7 @@ export function AssistantTextMessage({ message }) {
 }
 
 // Assistant message with data block
-export function AssistantDataMessage({ message }) {
+export function AssistantDataMessage({ message, onVizUpdate }) {
   const time = message.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return (
     <div className="flex items-start gap-3 animate-fade-in">
@@ -80,11 +80,11 @@ export function AssistantDataMessage({ message }) {
         {/* Data block card */}
         <div className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4 space-y-3 shadow-xl">
           <DataBlock
-            content={message.content}
             sql={message.sql}
-            python={message.python}
             tableData={message.tableData}
             chartConfig={message.chartConfig}
+            vizJson={message.vizJson}
+            onVizUpdate={onVizUpdate ? (newViz) => onVizUpdate(message.id, newViz) : undefined}
           />
         </div>
 

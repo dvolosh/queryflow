@@ -1,5 +1,5 @@
 /**
- * QueryFlow — API client for the local InsightsDB backend.
+ * QueryFlow — API client for the local ChinookDB backend.
  * All queries are read-only SELECTs executed via the Express server at /api.
  */
 
@@ -24,7 +24,7 @@ export async function queryDB(sql) {
 }
 
 /**
- * Fetch the full schema of every table in InsightsDB.
+ * Fetch the full schema of every Chinook table.
  * @returns {Promise<Array<{ table: string, columns: Array<{ name, type, pk, notnull }> }>>}
  */
 export async function getSchema() {
@@ -53,26 +53,24 @@ export async function isBackendHealthy() {
  * @param {string|null} context - Optional clarification context (chip selection).
  * @param {(label: string) => void} onStep - Called on each progress step event.
  * @param {object[]}  history   - Recent conversation messages for context.
- * @returns {Promise<object>} The final result payload:
- *   { type: 'ambiguity', message, options }
- *   { type: 'data_block', sql, tableData, chartConfig, summary }
+ * @returns {Promise<object>} The final result payload.
  */
 export function sendChatMessage(message, context, onStep, history = []) {
   return new Promise(async (resolve, reject) => {
     let res;
 
-    // Slim history: keep last 8 messages, strip tableData.rows (re-run server-side)
+    // Slim history: keep last 8 messages, strip large rows payloads
     const slimHistory = history.slice(-8).map(m => ({
       id:      m.id,
       role:    m.role,
       type:    m.type,
       content: m.content,
-      // Keep sql for revisualize; strip bulky rows
       ...(m.sql       ? { sql: m.sql }             : {}),
+      // Include vizJson so the server can feed it to the VizModifier
+      ...(m.vizJson   ? { vizJson: m.vizJson }     : {}),
       ...(m.tableData ? { tableData: {
         columns:  m.tableData.columns,
         rowCount: m.tableData.rowCount,
-        // rows intentionally omitted — server re-executes SQL
       }} : {}),
     }));
 
@@ -95,9 +93,8 @@ export function sendChatMessage(message, context, onStep, history = []) {
     let   buffer  = '';
 
     function processBuffer() {
-      // SSE messages are separated by double newlines
       const parts = buffer.split('\n\n');
-      buffer = parts.pop(); // keep any incomplete trailing chunk
+      buffer = parts.pop();
 
       for (const part of parts) {
         let event = 'message';
@@ -114,7 +111,7 @@ export function sendChatMessage(message, context, onStep, history = []) {
         try { parsed = JSON.parse(data); }
         catch { continue; }
 
-        if (event === 'step')   onStep?.(parsed.label);
+        if (event === 'step')        onStep?.(parsed.label);
         else if (event === 'result') resolve(parsed);
         else if (event === 'error')  reject(new Error(parsed.message));
       }
@@ -122,7 +119,6 @@ export function sendChatMessage(message, context, onStep, history = []) {
 
     async function pump() {
       try {
-        // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -138,6 +134,29 @@ export function sendChatMessage(message, context, onStep, history = []) {
   });
 }
 
+// ── Stateful Viz Adjustment API ───────────────────────────────────────────────
+
+/**
+ * Apply a natural-language style tweak to the current chart config.
+ * Calls POST /api/adjust-viz and returns the updated chartConfig.
+ *
+ * The server guarantees that datasets[].data values are never mutated.
+ *
+ * @param {object} currentVizJson  - The current Chart.js config JSON.
+ * @param {string} tweak           - The user's natural-language style tweak.
+ * @returns {Promise<object>}      - The updated chartConfig.
+ */
+export async function adjustViz(currentVizJson, tweak) {
+  const res = await fetch(`${BASE}/adjust-viz`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ currentVizJson, tweak }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `Viz adjust failed: ${res.status}`);
+  return data.chartConfig;
+}
+
 // ── Conversation CRUD API ─────────────────────────────────────────────────────
 
 /** Fetch all conversations, newest first. */
@@ -145,7 +164,7 @@ export async function getConversations() {
   try {
     const res = await fetch(`${BASE}/conversations`);
     if (!res.ok) return [];
-    return res.json(); // [{ id, title, created_at, updated_at }]
+    return res.json();
   } catch {
     return [];
   }
@@ -166,8 +185,6 @@ export async function createConversation({ id, title }) {
 
 /**
  * Rename an existing conversation.
- * @param {string} convId
- * @param {string} title
  */
 export async function renameConversation(convId, title) {
   await fetch(`${BASE}/conversations/${convId}`, {
@@ -184,7 +201,6 @@ export async function deleteConversation(convId) {
 
 /**
  * Load all messages for a conversation, reconstructing rich message objects.
- * The `payload` column stores JSON for extra fields (sql, tableData, etc.).
  *
  * @param {string} convId
  * @returns {Promise<object[]>}
@@ -200,7 +216,7 @@ export async function loadConversationMessages(convId) {
       type:      row.type,
       content:   row.content,
       timestamp: new Date(row.created_at),
-      // Spread all rich fields (sql, tableData, chartConfig, clarificationOptions…)
+      // Spread all rich fields (sql, tableData, chartConfig, vizJson, clarificationOptions…)
       ...(row.payload ? JSON.parse(row.payload) : {}),
     }));
   } catch {
@@ -209,8 +225,8 @@ export async function loadConversationMessages(convId) {
 }
 
 /**
- * Persist a single message to a conversation.
- * Non-base fields (sql, tableData, chartConfig, clarificationOptions, originalQuestion)
+ * Persist a single message to a conversation (INSERT).
+ * Non-base fields (sql, tableData, chartConfig, vizJson, clarificationOptions, originalQuestion)
  * are packed into the `payload` JSON column.
  *
  * @param {string} convId
@@ -219,7 +235,12 @@ export async function loadConversationMessages(convId) {
 export async function saveMessage(convId, message) {
   const { id, role, type, content, timestamp } = message;
 
-  const PAYLOAD_KEYS = ['sql', 'tableData', 'chartConfig', 'clarificationOptions', 'originalQuestion'];
+  // vizJson is persisted so that the Viz Modifier can pick it up
+  // from history when the conversation is reloaded.
+  const PAYLOAD_KEYS = [
+    'sql', 'tableData', 'chartConfig', 'vizJson',
+    'clarificationOptions', 'originalQuestion',
+  ];
   const payload = {};
   for (const key of PAYLOAD_KEYS) {
     if (message[key] !== undefined) payload[key] = message[key];
@@ -238,3 +259,31 @@ export async function saveMessage(convId, message) {
     }),
   });
 }
+
+/**
+ * Update the payload of an EXISTING message row (used after viz tweaks).
+ * Only the `payload` column (vizJson, chartConfig, sql, tableData, etc.) is
+ * overwritten — the base fields (role, type, content) stay untouched.
+ *
+ * @param {string} convId
+ * @param {object} message  — message object with the updated fields
+ */
+export async function updateMessage(convId, message) {
+  const PAYLOAD_KEYS = [
+    'sql', 'tableData', 'chartConfig', 'vizJson',
+    'clarificationOptions', 'originalQuestion',
+  ];
+  const payload = {};
+  for (const key of PAYLOAD_KEYS) {
+    if (message[key] !== undefined) payload[key] = message[key];
+  }
+
+  await fetch(`${BASE}/conversations/${convId}/messages/${message.id}`, {
+    method:  'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({
+      payload: Object.keys(payload).length > 0 ? payload : null,
+    }),
+  });
+}
+

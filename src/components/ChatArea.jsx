@@ -7,7 +7,7 @@ import {
   TypingIndicator,
 } from './Messages';
 
-export default function ChatArea({ messages, isLoading, executionStep, onClarify }) {
+export default function ChatArea({ messages, isLoading, executionStep, onClarify, onVizUpdate }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -22,7 +22,7 @@ export default function ChatArea({ messages, isLoading, executionStep, onClarify
             return <UserMessage key={msg.id} message={msg} />;
           }
           if (msg.type === 'data_block') {
-            return <AssistantDataMessage key={msg.id} message={msg} />;
+            return <AssistantDataMessage key={msg.id} message={msg} onVizUpdate={onVizUpdate} />;
           }
           if (msg.type === 'ambiguity') {
             return <AmbiguityMessage key={msg.id} message={msg} onSelect={opt => onClarify(msg.id, opt)} />;
