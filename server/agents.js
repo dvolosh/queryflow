@@ -60,6 +60,16 @@ If the question is too vague and needs disambiguation
   ]
 }
 
+If the question CANNOT be answered from the ChinookDB schema — for example, it asks about
+topics completely unrelated to the music store (weather, stocks, sports scores, personal data,
+external APIs, events after the dataset's time range, or any table/column that does not exist
+in ChinookDB), OR if it is a general knowledge / small-talk question with no data angle:
+{
+  "type": "out_of_scope",
+  "confidence": <0.0–1.0 — how certain you are this is truly out of scope>,
+  "message": "<One clear sentence explaining why the question cannot be answered from this database, and optionally what the user could ask instead>"
+}
+
 If the question is specific enough to query a database:
 {
   "type": "clear",
@@ -80,6 +90,10 @@ Rules:
   computed statistic. Example: "For each Album return (number_of_tracks, total_copies_sold).
   Return two numeric columns only. Do NOT compute correlation coefficients, averages, or any
   aggregated statistics — just pull the raw pairs so the user can visualize the relationship."
+- out_of_scope MUST be used whenever the question refers to data, entities, or concepts that
+  are simply not present in ChinookDB (e.g. streaming counts, social media, movie ratings,
+  real-time prices, anything outside the music store's Invoices/Tracks/Artists/Albums/etc.).
+  Do NOT attempt to stretch the schema to fit — be honest and upfront.
 `;
 
 // ── 2. The Database Manager ───────────────────────────────────────────────────
@@ -134,7 +148,7 @@ Rules:
 // ── 3. The Visualizer ─────────────────────────────────────────────────────────
 // Receives column names + all data rows + an optional chart type hint from the Gatekeeper.
 // Outputs strict JSON: Chart.js config spec + a short summary sentence.
-export function buildVisualizerSystem(columns, rows, gatekeeperHint = null) {
+export function buildVisualizerSystem(columns, rows, gatekeeperHint = null, originalQuestion = null) {
   const sample = JSON.stringify(rows.slice(0, 8), null, 2);
 
   const numericCols = columns.filter((_col, i) =>
@@ -178,7 +192,7 @@ IF the result set contains at least one numeric column, output:
     "xAxisLabel": "<human-readable x-axis label, e.g. 'Artist' or 'Month'>",
     "yAxisLabel": "<human-readable y-axis label, e.g. 'Revenue (USD)' or 'Track Count'>"
   },
-  "summary": "<1–2 sentence plain-English business insight — mention the top result and a notable trend>"
+  "summary": "<1–2 sentence answer that DIRECTLY addresses the user's question, cites the top result by name and value, and notes a key trend>"
 }
 
 EXCEPTION — for SCATTER charts, datasets[0].data MUST be [{x: number, y: number}, ...] pairs,
@@ -201,6 +215,9 @@ Rules:
 - For non-scatter: use the first text/string column as chart labels.
 - Use numeric columns as dataset data values. Multiple numeric columns → multiple datasets.
 - Do NOT invent fake numeric data. If there are no real numbers in the data, use type "none".
+- The summary MUST directly answer the user's original question${originalQuestion ? `: "${originalQuestion}"` : ''}.
+  Start with the answer (e.g. "Rock generated the most revenue at $X"), then add a supporting trend.
+  Do NOT write generic observations like "the data shows" — be specific and answer-first.
 - ${gatekeeperHint ? `YOU MUST use type: "${gatekeeperHint}" — the Gatekeeper has determined this is mandatory.` : 'Choose chart type: bar for comparisons, line for time-series trends, scatter for correlations between two numeric columns, pie/doughnut for ≤8 categories with distinct parts.'}
 ${horizontalHint}
 - ALWAYS set xAxisLabel and yAxisLabel (even for bar charts — these improve business readability).

@@ -1,3 +1,5 @@
+import colors from 'tailwindcss/colors';
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -11,6 +13,9 @@ export default {
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       colors: {
+        slate: colors.zinc,
+        indigo: colors.violet,
+        teal: colors.cyan,
         brand: {
           50: '#eef2ff',
           100: '#e0e7ff',

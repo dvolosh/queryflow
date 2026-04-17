@@ -18,7 +18,7 @@ import { Database, ChevronDown } from 'lucide-react';
 // ── Header ────────────────────────────────────────────────────────────────────
 function HeaderBar({ activeTitle }) {
   return (
-    <header className="flex-shrink-0 h-14 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-900/70 backdrop-blur-sm z-10">
+    <header className="flex-shrink-0 h-14 flex items-center justify-between px-6 border-b border-slate-800/50 bg-transparent backdrop-blur-md z-10">
       <div className="flex items-center gap-3">
         <h1 className="text-sm font-semibold text-slate-200 truncate max-w-xs">
           {activeTitle ?? 'QueryFlow'}
@@ -294,7 +294,7 @@ export default function App() {
   const activeTitle = conversations.find(c => c.id === activeConvId)?.title ?? null;
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans">
+    <div className="flex h-screen w-screen overflow-hidden bg-black font-sans p-3 gap-3">
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(c => !c)}
@@ -307,7 +307,7 @@ export default function App() {
         isLoading={isLoading}
       />
 
-      <main className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <main className="flex flex-col flex-1 min-w-0 overflow-hidden bg-[#09090b] rounded-2xl border border-slate-800/60 shadow-2xl relative">
         <HeaderBar activeTitle={activeTitle} />
         <ChatArea
           messages={messages}

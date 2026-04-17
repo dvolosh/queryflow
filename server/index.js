@@ -389,6 +389,42 @@ function sseWrite(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+// ── SQL safety validator ──────────────────────────────────────────────────────
+/**
+ * Validates and sanitises an LLM-generated SQL string before execution.
+ *
+ * Checks (in order):
+ *   1. Block WITH RECURSIVE — can loop indefinitely on misconfigured queries.
+ *   2. Block CROSS JOIN — cartesian products can produce millions of rows.
+ *   3. Inject a LIMIT 200 safety net if the query has no LIMIT clause.
+ *
+ * @param {string} sql
+ * @returns {string} Possibly-modified SQL that is safe to run.
+ * @throws {Error}  If a blocked construct is detected.
+ */
+function validateSql(sql) {
+  const upper = sql.toUpperCase();
+
+  if (/\bWITH\s+RECURSIVE\b/.test(upper)) {
+    throw new Error(
+      'Recursive CTEs are not permitted — they can loop indefinitely. Please rephrase your question.'
+    );
+  }
+
+  if (/\bCROSS\s+JOIN\b/.test(upper)) {
+    throw new Error(
+      'CROSS JOIN is not permitted — it can produce extremely large result sets. Please rephrase your question.'
+    );
+  }
+
+  if (!/\bLIMIT\b/.test(upper)) {
+    console.warn('[SqlValidator] Query missing LIMIT — injecting LIMIT 200 as safety net.');
+    sql = sql.trimEnd().replace(/;?\s*$/, '') + '\nLIMIT 200';
+  }
+
+  return sql;
+}
+
 // ── Schema loader (scoped to Chinook tables only) ─────────────────────────────
 function loadSchema() {
   return db
@@ -540,6 +576,26 @@ app.post('/api/chat', async (req, res) => {
       return;
     }
 
+    // ── Out-of-scope / unanswerable → explain and bail ──────────────────────
+    if (analystResult.type === 'out_of_scope') {
+      const confidence = typeof analystResult.confidence === 'number'
+        ? analystResult.confidence
+        : 1.0;
+      const baseMsg = analystResult.message ??
+        "That question can't be answered from the ChinookDB music store database.";
+
+      // High confidence (≥ 0.7): hard block with clear explanation
+      // Low confidence (< 0.7): softer tone — the model isn't certain, still stop but hedge
+      const summary = confidence < 0.7
+        ? `⚠️ I'm not certain, but this may be outside what ChinookDB covers. ${baseMsg} ` +
+          `If you believe this relates to music store data, try rephrasing your question.`
+        : baseMsg;
+
+      sseWrite(res, 'result', { type: 'text', summary });
+      res.end();
+      return;
+    }
+
     // ── Style tweak (viz_tweak) → delegate to /api/adjust-viz internally ────
     // We handle this here in SSE so the client gets a proper streaming response.
     if (analystResult.type === 'viz_tweak') {
@@ -614,6 +670,17 @@ app.post('/api/chat', async (req, res) => {
         throw new Error(`Re-execution of previous SQL failed: ${sqlErr.message}`);
       }
 
+      // Empty result on revisualize
+      if (reRows.length === 0) {
+        sseWrite(res, 'result', {
+          type:    'text',
+          summary: 'The previous query returned no rows — nothing to visualize. ' +
+                   'Try broadening your filters or asking a different question.',
+        });
+        res.end();
+        return;
+      }
+
       const reTableData = {
         columns:  reColumns,
         rows:     reRows.map(r => reColumns.map(c => r[c])),
@@ -629,10 +696,10 @@ app.post('/api/chat', async (req, res) => {
       const hint    = analystResult.chartHint
         ? ` Prefer a different chart type: ${analystResult.chartHint}.`
         : ' Use a different chart type than the one previously shown.';
-      const vizSys  = buildVisualizerSystem(reColumns, reTableData.rows, gatekeeperType);
+      const vizSys  = buildVisualizerSystem(reColumns, reTableData.rows, gatekeeperType, message);
       const vizRes  = await callOllama(
         vizSys,
-        `Columns: ${reColumns.join(', ')}\nAll rows (${reRows.length} total): ` +
+        `User's original question: "${message}"\nColumns: ${reColumns.join(', ')}\nAll rows (${reRows.length} total): ` +
         `${JSON.stringify(reTableData.rows)}${hint}`,
       );
 
@@ -677,12 +744,31 @@ app.post('/api/chat', async (req, res) => {
       throw new Error('DB Manager produced a non-SELECT statement — blocked for safety.');
     }
 
+    // ── SQL Safety Validation ────────────────────────────────────────────────
+    const safeSql = validateSql(sql);
+
     // ── Self-Healing SQL Execution ────────────────────────────────────────────
     sseWrite(res, 'step', { label: '⚙️  Executing query against ChinookDB...' });
 
     const { rows, columns, elapsed, finalSql } = await executeWithSelfHeal(
-      sql, refinedIntent, schema
+      safeSql, refinedIntent, schema
     );
+
+    // ── Empty Result Guard ─────────────────────────────────────────────────────
+    // If the SQL ran but matched zero rows, skip the Visualizer entirely and
+    // return a plain-text explanation so the user knows to adjust their question.
+    if (rows.length === 0) {
+      sseWrite(res, 'step',   { label: '✅ Query complete — no matching data.' });
+      sseWrite(res, 'result', {
+        type:    'text',
+        sql:     finalSql,
+        summary: 'The query ran successfully but returned no results. ' +
+                 'Try broadening your filters (e.g. a wider date range or fewer constraints) ' +
+                 'or rephrasing your question.',
+      });
+      res.end();
+      return;
+    }
 
     const tableData = {
       columns,
@@ -700,10 +786,10 @@ app.post('/api/chat', async (req, res) => {
     // ── Agent 3: The Visualizer ───────────────────────────────────────────────
     sseWrite(res, 'step', { label: '📊 Visualizer — designing chart...' });
 
-    const vizSystem = buildVisualizerSystem(columns, tableData.rows, gatekeeperType);
+    const vizSystem = buildVisualizerSystem(columns, tableData.rows, gatekeeperType, message);
     const vizResult = await callOllama(
       vizSystem,
-      `Columns: ${columns.join(', ')}\nAll rows (${rows.length} total): ${JSON.stringify(tableData.rows)}`,
+      `User's original question: "${message}"\nColumns: ${columns.join(', ')}\nAll rows (${rows.length} total): ${JSON.stringify(tableData.rows)}`,
     );
 
     if (!vizResult.chartConfig) {

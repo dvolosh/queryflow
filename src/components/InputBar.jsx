@@ -41,7 +41,7 @@ export default function InputBar({ onSend, isLoading, executionStep }) {
   ];
 
   return (
-    <div className="flex-shrink-0 border-t border-slate-800 bg-slate-900/80 backdrop-blur-sm px-4 py-4">
+    <div className="flex-shrink-0 border-t border-slate-800/50 bg-transparent backdrop-blur-md px-4 py-4 rounded-b-2xl">
       {/* Execution progress bar */}
       {isLoading && (
         <div className="mb-3 space-y-1.5">
@@ -74,10 +74,10 @@ export default function InputBar({ onSend, isLoading, executionStep }) {
       )}
 
       {/* Input area */}
-      <div className={`relative flex items-end gap-3 rounded-xl border bg-slate-800/60 transition-all duration-150 ${
+      <div className={`relative flex items-end gap-3 rounded-2xl border bg-slate-900/50 transition-all duration-300 ${
         isLoading
-          ? 'border-indigo-500/30 shadow-sm shadow-indigo-500/10'
-          : 'border-slate-700 focus-within:border-indigo-500/50 focus-within:shadow-sm focus-within:shadow-indigo-500/10'
+          ? 'border-indigo-500/30 shadow-[0_0_15px_rgba(139,92,246,0.1)]'
+          : 'border-slate-700/80 hover:border-slate-600 focus-within:border-indigo-500/50 focus-within:shadow-[0_0_15px_rgba(139,92,246,0.15)] focus-within:bg-slate-800/80'
       }`}>
         {/* Attachment button */}
         <button

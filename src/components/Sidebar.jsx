@@ -206,7 +206,7 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`flex flex-col flex-shrink-0 h-full bg-slate-900 border-r border-slate-800 transition-all duration-300 ease-in-out relative z-10 ${
+      className={`flex flex-col flex-shrink-0 h-full bg-[#09090b]/80 backdrop-blur-xl border border-slate-800/60 rounded-2xl transition-all duration-300 ease-in-out relative z-10 shadow-2xl ${
         collapsed ? 'w-16' : 'w-72'
       }`}
     >
@@ -335,7 +335,7 @@ export default function Sidebar({
       {/* ── Collapse toggle ── */}
       <button
         onClick={onToggle}
-        className="absolute -right-3 top-20 z-20 flex items-center justify-center w-6 h-6 rounded-full bg-slate-700 border border-slate-600 hover:bg-slate-600 transition-colors shadow-lg"
+        className="absolute -right-3 top-20 z-20 flex items-center justify-center w-6 h-6 rounded-full bg-slate-800 border border-slate-700 hover:bg-slate-700 transition-colors shadow-lg"
         title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       >
         {collapsed

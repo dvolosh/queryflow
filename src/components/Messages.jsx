@@ -40,7 +40,7 @@ export function UserMessage({ message }) {
   return (
     <div className="flex items-end justify-end gap-3 animate-fade-in">
       <div className="max-w-[75%] flex flex-col items-end gap-1">
-        <div className="bg-indigo-600 rounded-2xl rounded-br-sm px-4 py-2.5 shadow-md shadow-indigo-500/10">
+        <div className="bg-indigo-600 rounded-2xl rounded-br-sm px-4 py-2.5 shadow-lg shadow-indigo-600/25">
           <p className="text-sm text-white leading-relaxed">{message.content}</p>
         </div>
         <span className="text-xs text-slate-600 pr-1">{time}</span>
@@ -56,7 +56,7 @@ export function AssistantTextMessage({ message }) {
     <div className="flex items-start gap-3 animate-fade-in">
       <AssistantAvatar />
       <div className="flex-1 min-w-0 space-y-1">
-        <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl rounded-tl-sm px-4 py-3">
+        <div className="bg-slate-800/40 border border-slate-700/40 shadow-sm backdrop-blur-sm rounded-2xl rounded-tl-sm px-4 py-3">
           <MarkdownText text={message.content} />
         </div>
         <span className="text-xs text-slate-600 pl-1">{time}</span>
@@ -73,12 +73,12 @@ export function AssistantDataMessage({ message, onVizUpdate }) {
       <AssistantAvatar />
       <div className="flex-1 min-w-0 space-y-3">
         {/* Prose header */}
-        <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl rounded-tl-sm px-4 py-3">
+        <div className="bg-slate-800/40 border border-slate-700/40 shadow-sm backdrop-blur-sm rounded-2xl rounded-tl-sm px-4 py-3">
           <MarkdownText text={message.content} />
         </div>
 
         {/* Data block card */}
-        <div className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4 space-y-3 shadow-xl">
+        <div className="bg-[#050505]/60 border border-slate-700/40 shadow-2xl backdrop-blur-md rounded-2xl p-4 space-y-3">
           <DataBlock
             sql={message.sql}
             tableData={message.tableData}
@@ -133,7 +133,7 @@ export function TypingIndicator({ step }) {
   return (
     <div className="flex items-start gap-3 animate-fade-in">
       <AssistantAvatar />
-      <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-3">
+      <div className="bg-slate-800/40 border border-slate-700/40 shadow-sm backdrop-blur-sm rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-3">
         <div className="flex items-center gap-1">
           <span className="typing-dot w-1.5 h-1.5 bg-indigo-400 rounded-full inline-block" />
           <span className="typing-dot w-1.5 h-1.5 bg-indigo-400 rounded-full inline-block" />
