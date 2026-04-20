@@ -210,7 +210,7 @@ function ChartRenderer({ chartConfig, height = 280, lightBg = false }) {
           },
           scales: isPieLike ? {} : {
             x: {
-              type:        isScatter ? 'linear' : 'category',
+              type:        isScatter ? 'linear' : (isHorizontal ? 'linear' : 'category'),
               beginAtZero: xBeginZero,
               ticks: { color: T.tickColor, font: { size: 11 }, maxRotation: isHorizontal ? 0 : 35 },
               grid:  { color: T.gridColor },
@@ -223,6 +223,7 @@ function ChartRenderer({ chartConfig, height = 280, lightBg = false }) {
               } : { display: false },
             },
             y: {
+              type:        isScatter ? 'linear' : (isHorizontal ? 'category' : 'linear'),
               beginAtZero: yBeginZero,
               ticks:       { color: T.tickColor, font: { size: 11 } },
               grid:        { color: T.gridColor },
@@ -498,7 +499,12 @@ export default function DataBlock({ sql, tableData, chartConfig, vizJson: vizJso
 
   // ── Instant Flip (toggles indexAxis — no LLM call) ─────────────────────────
   function handleFlip() {
-    const updated = { ...vizJson, indexAxis: vizJson?.indexAxis === 'y' ? 'x' : 'y' };
+    const updated = {
+      ...vizJson,
+      indexAxis: vizJson?.indexAxis === 'y' ? 'x' : 'y',
+      xAxisLabel: vizJson?.yAxisLabel,
+      yAxisLabel: vizJson?.xAxisLabel
+    };
     setVizJson(updated);
     onVizUpdate?.(updated);
   }

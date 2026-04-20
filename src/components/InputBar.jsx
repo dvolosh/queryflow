@@ -8,6 +8,75 @@ export default function InputBar({ onSend, isLoading, executionStep }) {
   const [value, setValue] = useState('');
   const textareaRef = useRef(null);
 
+  // Speech recognition state
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeechSupported, setIsSpeechSupported] = useState(true);
+  const recognitionRef = useRef(null);
+  const prefixRef = useRef('');
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      // continuous = false so it naturally stops when they pause speaking
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      
+      recognition.onstart = () => {
+        setIsListening(true);
+        // Save whatever was already typed so we can append to it cleanly
+        let current = textareaRef.current ? textareaRef.current.value : '';
+        if (current && !current.endsWith(' ')) current += ' ';
+        prefixRef.current = current;
+      };
+      
+      recognition.onerror = (e) => {
+        console.error("Speech API Error:", e.error);
+        if (e.error === 'not-allowed' || e.error === 'audio-capture') {
+           setIsListening(false);
+        }
+      };
+      
+      recognition.onend = () => setIsListening(false);
+      
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          transcript += event.results[i][0].transcript;
+        }
+        setValue(prefixRef.current + transcript);
+        
+        // Auto-resize the textarea
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+          textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + 'px';
+        }
+      };
+      
+      recognitionRef.current = recognition;
+    } else {
+      setIsSpeechSupported(false);
+    }
+    
+    return () => {
+      if (recognitionRef.current) recognitionRef.current.abort();
+    };
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) return;
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      textareaRef.current?.focus();
+      try {
+        recognitionRef.current.start();
+      } catch (err) {
+        console.error("Mic start error:", err);
+      }
+    }
+  };
+
   const handleSubmit = () => {
     if (!value.trim() || isLoading) return;
     onSend(value.trim());
@@ -109,13 +178,20 @@ export default function InputBar({ onSend, isLoading, executionStep }) {
             <kbd className="text-[10px] text-slate-600 bg-slate-700/60 px-1.5 py-0.5 rounded font-mono">↵</kbd>
           </div>
 
-          <button
-            className="p-1.5 text-slate-500 hover:text-slate-300 transition-colors"
-            title="Voice input"
-            disabled={isLoading}
-          >
-            <Mic size={16} />
-          </button>
+          {isSpeechSupported && (
+            <button
+              onClick={toggleListening}
+              className={`p-1.5 transition-all duration-300 rounded-full ${
+                isListening 
+                  ? 'text-rose-400 bg-rose-500/10 shadow-[0_0_10px_rgba(244,63,94,0.3)]' 
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-slate-700/50'
+              }`}
+              title={isListening ? "Stop listening" : "Voice input"}
+              disabled={isLoading}
+            >
+              <Mic size={16} className={isListening ? 'animate-pulse' : ''} />
+            </button>
+          )}
 
           <button
             onClick={handleSubmit}

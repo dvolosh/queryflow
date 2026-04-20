@@ -12,8 +12,8 @@
  *   Applied between SQL execution and the Visualizer to enforce chart-type rules.
  */
 
-const OLLAMA_BASE = 'http://localhost:11434';
-const MODEL       = 'gemma4:e4b';
+const OLLAMA_BASE = process.env.OLLAMA_BASE || 'http://localhost:11434';
+const MODEL = process.env.OLLAMA_MODEL || 'gemma4:31b-cloud';
 
 // ── 1. The Analyst ────────────────────────────────────────────────────────────
 // Receives the raw user question.
@@ -238,8 +238,8 @@ ${horizontalHint}
 // MUST return ONLY the updated chartConfig object — no data mutations allowed.
 export function buildVizModifierSystem(currentVizJson) {
   const currentStr = JSON.stringify(currentVizJson, null, 2);
-  const chartType  = currentVizJson?.type ?? 'bar';
-  const isLine     = chartType === 'line';
+  const chartType = currentVizJson?.type ?? 'bar';
+  const isLine = chartType === 'line';
 
   return `\
 You are the Viz Modifier for QueryFlow. Your ONLY job is to apply a user's style tweak
@@ -371,13 +371,16 @@ export async function callOllama(systemPrompt, userContent) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const res = await fetch(`${OLLAMA_BASE}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        ...(process.env.OLLAMA_API_KEY && { 'Authorization': `Bearer ${process.env.OLLAMA_API_KEY}` })
+      },
       body: JSON.stringify({
-        model:   MODEL,
-        stream:  false,
+        model: MODEL,
+        stream: false,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user',   content: userContent  },
+          { role: 'user', content: userContent },
         ],
       }),
     });
@@ -388,7 +391,7 @@ export async function callOllama(systemPrompt, userContent) {
     }
 
     const payload = await res.json();
-    const raw     = payload.message?.content ?? '';
+    const raw = payload.message?.content ?? '';
 
     // ── Pass 1: strip <think>…</think> blocks ─────────────────────────────────
     const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
