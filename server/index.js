@@ -2,11 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import db from './db.js';
 import {
-  ANALYST_SYSTEM,
+  buildAnalystSystem,
   buildDBManagerSystem,
   buildVisualizerSystem,
   buildVizModifierSystem,
   applyGatekeeper,
+  isNumericValue,
   callOllama,
 } from './agents.js';
 
@@ -285,7 +286,7 @@ function fixScatterData(chartConfig, columns, rawRows) {
   const isIdCol = name => ID_RE.test(name);
 
   const isNumericCol = i =>
-    rawRows.slice(0, 5).some(row => typeof row[i] === 'number');
+    rawRows.slice(0, 5).some(row => isNumericValue(row[i]));
 
   // First pass: non-ID numeric columns
   let picked = columns
@@ -313,7 +314,9 @@ function fixScatterData(chartConfig, columns, rawRows) {
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .trim();
 
-  const xyData = rawRows.map(row => ({ x: row[xIdx], y: row[yIdx] }));
+  const xyData = rawRows
+    .map(row => ({ x: Number(row[xIdx]), y: Number(row[yIdx]) }))
+    .filter(pt => Number.isFinite(pt.x) && Number.isFinite(pt.y));
   console.log(`[ScatterFix] Built {x,y} from "${xCol}" (x) and "${yCol}" (y) — ${xyData.length} points`);
 
   const baseColor  = ds[0]?.backgroundColor ?? ds[0]?.borderColor ?? '#6366f1';
@@ -333,21 +336,171 @@ function fixScatterData(chartConfig, columns, rawRows) {
   };
 }
 
+// ── Server-side categorical data rebuilder ───────────────────────────────────
+/**
+ * The Visualizer LLM frequently truncates data arrays (e.g. returns 3 items when
+ * the user asked for "Top 5"). This function deterministically rebuilds the
+ * chart's labels[] and datasets[].data[] arrays directly from the raw SQL rows,
+ * ensuring the chart EXACTLY matches the query result.
+ *
+ * For scatter charts this is a no-op (scatter uses {x,y} pairs from fixScatterData).
+ *
+ * Strategy:
+ *   1. Identify the label column (first text/string column).
+ *   2. Identify all numeric columns → one dataset per numeric column.
+ *   3. Rebuild labels and data arrays 1:1 from rawRows.
+ *   4. Preserve the LLM's styling choices (colors, axis labels, title, etc.).
+ */
+function rebuildCategoricalData(chartConfig, columns, rawRows) {
+  const type = chartConfig?.type;
+  // Only apply to categorical chart types 
+  if (!type || type === 'scatter' || type === 'none') return chartConfig;
+
+  // Detect ID-like columns (e.g. TrackId, InvoiceId, CustomerId)
+  const ID_RE = /(?:^|_)id$/i;
+  const isIdCol = name => ID_RE.test(name);
+
+  // ── Special case: single-row summary statistics ──────────────────────────
+  // If the DB returned a single row of aggregates (e.g. AVG, MIN, MAX, Median),
+  // pivot: use column names as labels and the single row values as data.
+  if (rawRows.length === 1) {
+    const statsNumericIdxs = columns
+      .map((_col, i) => i)
+      .filter(i => isNumericValue(rawRows[0][i]));
+
+    if (statsNumericIdxs.length >= 2) {
+      const newLabels = statsNumericIdxs.map(i => columns[i]);
+      const newData   = statsNumericIdxs.map(i => Number(rawRows[0][i]));
+
+      const existingDs = chartConfig.datasets ?? [];
+      const existingStyle = existingDs[0] ?? {};
+
+      console.log(`[RebuildData] Single-row pivot: ${newLabels.length} stat columns as bar labels`);
+      return {
+        ...chartConfig,
+        labels:   newLabels,
+        datasets: [{
+          ...existingStyle,
+          label: existingStyle.label ?? 'Statistics',
+          data:  newData,
+        }],
+      };
+    }
+  }
+
+  // ── Find the label column (first non-numeric, non-ID column) ────────────
+  let labelIdx = columns.findIndex((_col, i) =>
+    !isIdCol(columns[i]) &&
+    rawRows.slice(0, 3).every(row => !isNumericValue(row[i]))
+  );
+
+  // Fallback: first non-numeric column even if it looks like an ID
+  if (labelIdx === -1) {
+    labelIdx = columns.findIndex((_col, i) =>
+      rawRows.slice(0, 3).every(row => !isNumericValue(row[i]))
+    );
+  }
+
+  // Last fallback: column 0 (even if numeric / ID) but warn
+  if (labelIdx === -1) {
+    labelIdx = 0;
+    console.warn('[RebuildData] No suitable label column found, using index 0 as fallback.');
+  }
+
+  // Find all numeric column indices (excluding the label)
+  const numericIdxs = columns
+    .map((_col, i) => i)
+    .filter(i => i !== labelIdx && rawRows.slice(0, 3).some(row => isNumericValue(row[i])));
+
+  if (numericIdxs.length === 0) return chartConfig; // nothing to rebuild
+
+  // Rebuild labels from SQL rows
+  const newLabels = rawRows.map(row => {
+    const val = row[labelIdx];
+    const str = val != null ? String(val) : '';
+    return str.length > 25 ? str.slice(0, 22) + '…' : str;
+  });
+
+  // Rebuild datasets — preserve LLM styling, replace data
+  const existingDs = chartConfig.datasets ?? [];
+  const newDatasets = numericIdxs.map((colIdx, dsIdx) => {
+    const existingStyle = existingDs[dsIdx] ?? existingDs[0] ?? {};
+    const newData = rawRows.map(row => {
+      const v = row[colIdx];
+      return isNumericValue(v) ? Number(v) : 0;
+    });
+
+    // For pie/doughnut, ensure backgroundColor is an array matching labels
+    let bg = existingStyle.backgroundColor;
+    if ((type === 'pie' || type === 'doughnut') && !Array.isArray(bg)) {
+      const PIE_COLORS = [
+        '#6366f1', '#14b8a6', '#8b5cf6', '#f59e0b',
+        '#f43f5e', '#38bdf8', '#10b981', '#f97316',
+        '#a855f7', '#ef4444', '#22d3ee', '#84cc16',
+      ];
+      bg = newData.map((_, i) => PIE_COLORS[i % PIE_COLORS.length]);
+    }
+
+    return {
+      ...existingStyle,
+      label: existingStyle.label ?? columns[colIdx],
+      data:  newData,
+      ...(bg ? { backgroundColor: bg } : {}),
+    };
+  });
+
+  const oldLen = chartConfig.labels?.length ?? 0;
+  if (oldLen !== newLabels.length) {
+    console.log(`[RebuildData] Corrected data: ${oldLen} → ${newLabels.length} entries from SQL rows`);
+  }
+
+  return {
+    ...chartConfig,
+    labels:   newLabels,
+    datasets: newDatasets,
+  };
+}
+
+// ── Extract user-specified limit from message ────────────────────────────────
+/**
+ * Parses the user's message for explicit "top N", "N results", "limit N" patterns.
+ * Returns the number N or null if none found.
+ */
+function extractUserLimit(userMsg) {
+  if (!userMsg) return null;
+  const lower = userMsg.toLowerCase();
+  // Match "top 5", "top-5", "top5"
+  const topMatch = lower.match(/\btop[- ]?(\d+)\b/);
+  if (topMatch) return parseInt(topMatch[1], 10);
+  // Match "limit 5", "limit to 5"
+  const limitMatch = lower.match(/\blimit(?:\s+to)?\s+(\d+)\b/);
+  if (limitMatch) return parseInt(limitMatch[1], 10);
+  // Match "5 results", "3 artists", "7 genres" etc.
+  const nResultsMatch = lower.match(/\b(\d+)\s+(?:results?|items?|entries|rows?)\b/);
+  if (nResultsMatch) return parseInt(nResultsMatch[1], 10);
+  return null;
+}
+
 // ── Server-side categorical chart trimmer ────────────────────────────────────
 /**
  * When a bar or line chart has too many category labels, the chart becomes
- * unreadable. This post-processor automatically keeps only the top N entries,
- * sorted by the primary dataset (first dataset) in descending order.
+ * unreadable. This post-processor keeps only the top N entries, sorted by
+ * the primary dataset (first dataset) in descending order.
+ *
+ * If the user explicitly requested a limit (e.g. "Top 5"), that limit is
+ * honored instead of the default cap.
  *
  * For scatter / pie / doughnut, this is a no-op.
  */
-const CATEGORICAL_MAX = 10;
-function trimCategoricalData(chartConfig) {
+const CATEGORICAL_MAX_DEFAULT = 25;
+function trimCategoricalData(chartConfig, userLimit = null) {
   const type = chartConfig?.type;
   if (!['bar', 'line'].includes(type)) return chartConfig;
 
   const labels = chartConfig.labels ?? [];
-  if (labels.length <= CATEGORICAL_MAX) return chartConfig;
+  const maxLabels = userLimit ?? CATEGORICAL_MAX_DEFAULT;
+
+  if (labels.length <= maxLabels) return chartConfig;
 
   const ds      = chartConfig.datasets ?? [];
   const primary = ds[0]?.data ?? [];
@@ -356,13 +509,13 @@ function trimCategoricalData(chartConfig) {
   const indices = labels
     .map((_, i) => i)
     .sort((a, b) => (Number(primary[b]) || 0) - (Number(primary[a]) || 0))
-    .slice(0, CATEGORICAL_MAX);
+    .slice(0, maxLabels);
 
-  console.log(`[TrimCategories] Trimmed ${labels.length} → ${CATEGORICAL_MAX} labels`);
+  console.log(`[TrimCategories] Trimmed ${labels.length} → ${maxLabels} labels`);
 
   return {
     ...chartConfig,
-    title:    chartConfig.title ? `${chartConfig.title} (Top ${CATEGORICAL_MAX})` : chartConfig.title,
+    title:    chartConfig.title ? `${chartConfig.title} (Top ${maxLabels})` : chartConfig.title,
     labels:   indices.map(i => labels[i]),
     datasets: ds.map(d => ({
       ...d,
@@ -379,9 +532,78 @@ function trimCategoricalData(chartConfig) {
   };
 }
 
-/** Convenience: run both post-processors in order. */
-function postProcessViz(chartConfig, columns, rawRows) {
-  return trimCategoricalData(fixScatterData(chartConfig, columns, rawRows));
+// ── Server-side Boxplot Data Builder ─────────────────────────────────────────
+/**
+ * For boxplots, the DB returns raw individual rows. This processor groups the raw
+ * data by category and formats it into the array-of-arrays structure required by
+ * the chartjs-chart-boxplot plugin.
+ */
+function buildBoxplotData(chartConfig, columns, rawRows) {
+  if (chartConfig?.type !== 'boxplot') return chartConfig;
+
+  // Detect ID-like columns
+  const ID_RE = /(?:^|_)id$/i;
+  const isIdCol = name => ID_RE.test(name);
+
+  // Find the label column (first non-numeric, non-ID column)
+  let labelIdx = columns.findIndex(c => !isIdCol(c) && rawRows.slice(0, 3).every(row => !isNumericValue(row[columns.indexOf(c)])));
+  if (labelIdx === -1) {
+    labelIdx = columns.findIndex(c => rawRows.slice(0, 3).every(row => !isNumericValue(row[columns.indexOf(c)])));
+  }
+
+  // Find numeric column index
+  const numericIdxs = columns.map((_, i) => i).filter(i => i !== labelIdx && rawRows.slice(0, 3).some(row => isNumericValue(row[i])));
+  if (numericIdxs.length === 0) return chartConfig;
+
+  // Group raw rows
+  const grouped = {};
+  if (labelIdx === -1) {
+    grouped['All Data'] = rawRows;
+  } else {
+    for (const r of rawRows) {
+      const key = String(r[labelIdx] ?? 'Unknown');
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(r);
+    }
+  }
+
+  // Cap at 25 labels to keep chart readable
+  const allLabels = Object.keys(grouped);
+  const labels = allLabels.slice(0, 25);
+  
+  const existingDs = chartConfig.datasets ?? [];
+  const datasets = numericIdxs.map((colIdx, dsIdx) => {
+    const style = existingDs[dsIdx] ?? existingDs[0] ?? {};
+    const data = labels.map(l => 
+      grouped[l].map(r => Number(r[colIdx])).filter(v => Number.isFinite(v))
+    );
+    return {
+      ...style,
+      label: style.label || columns[colIdx],
+      data,
+      backgroundColor: style.backgroundColor ?? '#6366f1',
+      borderColor: style.borderColor ?? '#6366f1',
+      borderWidth: style.borderWidth ?? 2
+    };
+  });
+
+  console.log(`[RebuildData] Built boxplot data: ${labels.length} groups.`);
+  return {
+    ...chartConfig,
+    labels,
+    datasets,
+    title: chartConfig.title ? `${chartConfig.title}${allLabels.length > 25 ? ' (Top 25)' : ''}` : chartConfig.title
+  };
+}
+
+/** Convenience: run all post-processors in order. */
+function postProcessViz(chartConfig, columns, rawRows, userMsg = '') {
+  const userLimit = extractUserLimit(userMsg);
+  let result = fixScatterData(chartConfig, columns, rawRows);
+  result = rebuildCategoricalData(result, columns, rawRows);
+  result = buildBoxplotData(result, columns, rawRows);
+  result = trimCategoricalData(result, userLimit);
+  return result;
 }
 
 // ── SSE helper ───────────────────────────────────────────────────────────────
@@ -545,6 +767,9 @@ app.post('/api/chat', async (req, res) => {
   const lastDataBlock = [...history].reverse().find(m => m.type === 'data_block');
 
   try {
+    // ── Load schema once for all agents in this request ────────────────────────
+    const schema = loadSchema();
+
     // ── Agent 1: The Analyst ───────────────────────────────────────────────────
     sseWrite(res, 'step', { label: '🔍 Analyst — evaluating intent...' });
 
@@ -552,7 +777,8 @@ app.post('/api/chat', async (req, res) => {
       (context ? `${message}\n\nUser clarification selected: ${context}` : message)
       + buildHistoryContext();
 
-    const analystResult = await callOllama(ANALYST_SYSTEM, userContent);
+    const analystSystem = buildAnalystSystem(schema);
+    const analystResult = await callOllama(analystSystem, userContent);
 
     // ── Ambiguity → return chips immediately ────────────────────────────────
     if (analystResult.type === 'ambiguity') {
@@ -705,8 +931,10 @@ app.post('/api/chat', async (req, res) => {
 
       if (!vizRes.chartConfig) throw new Error('Visualizer did not return a chartConfig.');
 
-      // Apply scatter normalisation + categorical trim for the revisualize path
-      const finalViz = postProcessViz(vizRes.chartConfig, reColumns, reTableData.rows);
+      // Force chart type if Gatekeeper determined one
+      if (gatekeeperType && vizRes.chartConfig) vizRes.chartConfig.type = gatekeeperType;
+      // Apply scatter normalisation + data rebuild + categorical trim
+      const finalViz = postProcessViz(vizRes.chartConfig, reColumns, reTableData.rows, message);
       sseWrite(res, 'step',   { label: '✅ Rendering results...' });
       sseWrite(res, 'result', {
         type:        'data_block',
@@ -729,7 +957,6 @@ app.post('/api/chat', async (req, res) => {
     // ── Agent 2: The Database Manager ────────────────────────────────────────
     sseWrite(res, 'step', { label: '🗄️  DB Manager — writing SQL...' });
 
-    const schema   = loadSchema();
     const dbSystem = buildDBManagerSystem(schema);
     const prevSql  = lastDataBlock?.sql ? `\n\nPrevious query for context:\n${lastDataBlock.sql}` : '';
     const dbResult = await callOllama(dbSystem, `Data intent: ${refinedIntent}${prevSql}`);
@@ -796,8 +1023,13 @@ app.post('/api/chat', async (req, res) => {
       throw new Error('Visualizer did not return a chartConfig object.');
     }
 
-    // ── Scatter fix + categorical trim (server-side, deterministic) ──────────────
-    const finalViz = postProcessViz(vizResult.chartConfig, columns, tableData.rows);
+    // ── Force gatekeeper chart type if it had an opinion ─────────────────────────
+    if (gatekeeperType && vizResult.chartConfig) {
+      vizResult.chartConfig.type = gatekeeperType;
+    }
+
+    // ── Deterministic post-processing: scatter fix + data rebuild + trim ─────────
+    const finalViz = postProcessViz(vizResult.chartConfig, columns, tableData.rows, message);
     sseWrite(res, 'step',   { label: '✅ Rendering results...' });
     sseWrite(res, 'result', {
       type:        'data_block',

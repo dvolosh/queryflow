@@ -5,8 +5,9 @@ import {
   Download, Maximize2, Minimize2, FlipHorizontal, Sun, Moon,
 } from 'lucide-react';
 import { Chart, registerables } from 'chart.js';
+import { BoxPlotController, BoxAndWiskers } from '@sgratzl/chartjs-chart-boxplot';
 import { adjustViz } from '../data/api';
-Chart.register(...registerables);
+Chart.register(...registerables, BoxPlotController, BoxAndWiskers);
 
 // ── Syntax highlighter for SQL ────────────────────────────────────────────────
 function highlightSQL(code) {
@@ -165,6 +166,7 @@ function ChartRenderer({ chartConfig, height = 280, lightBg = false }) {
     const chartType    = chartConfig.type ?? 'bar';
     const isPieLike    = chartType === 'pie' || chartType === 'doughnut';
     const isScatter    = chartType === 'scatter';
+    const isBoxplot    = chartType === 'boxplot';
     const rawDatasets  = chartConfig.datasets ?? [];
     const datasets     = normaliseDatasets(chartType, rawDatasets);
     const indexAxis    = chartConfig.indexAxis ?? 'x';
@@ -188,7 +190,7 @@ function ChartRenderer({ chartConfig, height = 280, lightBg = false }) {
           animation: { duration: 500, easing: 'easeInOutQuart' },
           plugins: {
             legend: {
-              display: isPieLike || isScatter || datasets.length > 1,
+              display: isPieLike || isScatter || isBoxplot || datasets.length > 1,
               labels: { color: T.legendColor, font: { size: 12 }, padding: 16, boxWidth: 12 },
             },
             title: {
@@ -211,7 +213,7 @@ function ChartRenderer({ chartConfig, height = 280, lightBg = false }) {
           scales: isPieLike ? {} : {
             x: {
               type:        isScatter ? 'linear' : (isHorizontal ? 'linear' : 'category'),
-              beginAtZero: xBeginZero,
+              ...(isBoxplot ? {} : { beginAtZero: xBeginZero }),
               ticks: { color: T.tickColor, font: { size: 11 }, maxRotation: isHorizontal ? 0 : 35 },
               grid:  { color: T.gridColor },
               title: chartConfig.xAxisLabel ? {
@@ -224,7 +226,7 @@ function ChartRenderer({ chartConfig, height = 280, lightBg = false }) {
             },
             y: {
               type:        isScatter ? 'linear' : (isHorizontal ? 'category' : 'linear'),
-              beginAtZero: yBeginZero,
+              ...(isBoxplot ? {} : { beginAtZero: yBeginZero }),
               ticks:       { color: T.tickColor, font: { size: 11 } },
               grid:        { color: T.gridColor },
               title: chartConfig.yAxisLabel ? {
