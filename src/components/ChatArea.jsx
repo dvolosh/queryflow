@@ -5,6 +5,7 @@ import {
   AssistantDataMessage,
   AmbiguityMessage,
   TypingIndicator,
+  RecommendationMessage,
 } from './Messages';
 
 export default function ChatArea({ messages, isLoading, executionStep, onClarify, onVizUpdate }) {
@@ -26,6 +27,9 @@ export default function ChatArea({ messages, isLoading, executionStep, onClarify
           }
           if (msg.type === 'ambiguity') {
             return <AmbiguityMessage key={msg.id} message={msg} onSelect={opt => onClarify(msg.id, opt)} />;
+          }
+          if (msg.type === 'recommendation') {
+            return <RecommendationMessage key={msg.id} message={msg} />;
           }
           return <AssistantTextMessage key={msg.id} message={msg} />;
         })}

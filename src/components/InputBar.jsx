@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { EXECUTION_STEPS } from '../data/mockData';
 
-export default function InputBar({ onSend, isLoading, executionStep }) {
+export default function InputBar({ onSend, isLoading, executionStep, onRecommend, canRecommend }) {
   const [value, setValue] = useState('');
   const textareaRef = useRef(null);
 
@@ -130,6 +130,23 @@ export default function InputBar({ onSend, isLoading, executionStep }) {
       {/* Suggestion chips (only when idle) */}
       {!isLoading && !value && (
         <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1 scrollbar-thin">
+          {/* Action Button: Business Recommendation */}
+          <button
+            onClick={onRecommend}
+            disabled={!canRecommend}
+            className={`flex-shrink-0 flex items-center gap-1.5 text-xs font-medium border rounded-full px-3 py-1.5 transition-all duration-150 whitespace-nowrap ${
+              canRecommend
+                ? 'border-amber-500/50 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 hover:border-amber-500 shadow-sm shadow-amber-500/10'
+                : 'border-slate-800 text-slate-600 bg-slate-900/50 cursor-not-allowed'
+            }`}
+            title={canRecommend ? "Generate a business recommendation from this session" : "Ask at least one data question first"}
+          >
+            💡 Business Insights
+          </button>
+
+          {/* Divider */}
+          <div className="w-px h-4 bg-slate-700/50 mx-1 flex-shrink-0" />
+
           {SUGGESTION_CHIPS.map((chip, i) => (
             <button
               key={i}

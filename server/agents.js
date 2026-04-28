@@ -450,6 +450,73 @@ export function applyGatekeeper(columns, rows, userMsg = '') {
   return null;
 }
 
+// ── 5. The Business Recommendation Agent ─────────────────────────────────────
+/**
+ * Builds the system prompt for the Recommendation Agent.
+ *
+ * The agent receives a compact summary of the conversation (questions asked,
+ * SQL queries run, chart types, and insight summaries) and produces a
+ * well-structured Markdown business recommendation.
+ *
+ * The output is plain Markdown — NOT JSON. Use callOllamaRaw() to call it.
+ */
+export function buildRecommendationSystem(conversationContext) {
+  return `\
+You are a senior business analyst generating an actionable recommendation memo.
+You have been given a summary of an analytics session in which a user explored data
+from ChinookDB — a music store's operational database — using SQL queries.
+
+Your task is to synthesize the data findings into a concise, professional business
+recommendation document in Markdown.
+
+──────────────────────────────────────────────
+ANALYTICS SESSION CONTEXT:
+${conversationContext}
+──────────────────────────────────────────────
+
+Write your recommendation using the following structure. Do not deviate from it.
+
+# Business Recommendation
+
+## Executive Summary
+One short paragraph (3–5 sentences) distilling the single most important finding
+and what action it implies. Be direct and specific — cite real numbers from the data.
+
+## Key Findings
+A bulleted list of 3–5 concrete data-backed observations from this session.
+Each bullet should name a specific metric, value, or trend observed. Avoid vague
+statements. Use **bold** to highlight key figures.
+
+## Recommended Actions
+A numbered list of 3–4 actionable steps management could take based on these findings.
+Each action must link directly to a specific finding above. Be specific about *what*
+to do, *which segment* to target, and (where possible) *what outcome* to expect.
+
+## Decision Rationale
+A short paragraph (2–4 sentences) explaining the reasoning chain behind the top
+recommendation — what the data shows, what it implies, and why this action follows
+logically from the evidence.
+
+## Risks & Caveats
+A bulleted list of 2–4 honest limitations or risks:
+- Data quality or scope limitations (e.g. dataset time range, missing dimensions)
+- Assumptions made that may not hold
+- External factors the data cannot account for
+- Actions that could backfire if the context shifts
+
+──────────────────────────────────────────────
+STYLE RULES — follow these exactly:
+- Use clean, professional prose. This is a business memo, not a chatbot reply.
+- Do NOT use more than 1–2 emojis total across the entire document. Prefer none.
+- Use **bold** for numbers and key terms. Use *italics* sparingly for emphasis.
+- Do NOT add filler phrases like "Great question!" or "Based on the data provided".
+- Do NOT repeat the same point across sections.
+- Keep the total length under 600 words. Be concise but substantive.
+- Markdown headers, bullets, and bold are encouraged. Tables are optional.
+- Output raw Markdown only — no JSON, no code fences around the whole document.
+`;
+}
+
 // ── Ollama HTTP client ────────────────────────────────────────────────────────
 /**
  * Call the local Ollama model with a given system prompt and user content.
@@ -531,4 +598,51 @@ export async function callOllama(systemPrompt, userContent) {
     'The model produced output that could not be parsed after 2 attempts. ' +
     'Try rephrasing your question.'
   );
+}
+
+// ── Ollama raw-text client ────────────────────────────────────────────────────
+/**
+ * Like callOllama(), but returns the raw text response (after stripping
+ * <think>...</think> blocks and markdown code fences) instead of attempting
+ * JSON parsing. Used for the Recommendation Agent which outputs Markdown prose.
+ *
+ * @param {string} systemPrompt
+ * @param {string} userContent
+ * @returns {Promise<string>}  Plain text / Markdown string
+ */
+export async function callOllamaRaw(systemPrompt, userContent) {
+  const res = await fetch(`${OLLAMA_BASE}/api/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(process.env.OLLAMA_API_KEY && { 'Authorization': `Bearer ${process.env.OLLAMA_API_KEY}` }),
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      stream: false,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userContent },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Ollama error ${res.status}: ${body.slice(0, 300)}`);
+  }
+
+  const payload = await res.json();
+  const raw = payload.message?.content ?? '';
+
+  // Strip <think>…</think> reasoning blocks (used by some reasoning models)
+  const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // Strip outer markdown fences if the model wrapped the whole response in one
+  const deFenced = noThink
+    .replace(/^```(?:markdown|md)?\s*/im, '')
+    .replace(/\s*```\s*$/m, '')
+    .trim();
+
+  return deFenced;
 }

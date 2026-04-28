@@ -12,6 +12,7 @@ import {
   loadConversationMessages,
   saveMessage,
   updateMessage,
+  getRecommendation,
 } from './data/api';
 import { Database, ChevronDown } from 'lucide-react';
 
@@ -290,8 +291,53 @@ export default function App() {
     runAndPersist(originalQ, option.label, chipDisplay);
   }
 
+  // ── Handle Business Recommendation ─────────────────────────────────────────
+  async function handleRecommend() {
+    const convId = activeConvIdRef.current;
+    if (!convId || isLoading) return;
+
+    setIsLoading(true);
+    setExecutionStep('Analyzing session history...');
+
+    try {
+      const markdown = await getRecommendation(messages, (label) => setExecutionStep(label));
+
+      const recMsg = {
+        id:        crypto.randomUUID(),
+        role:      'assistant',
+        type:      'recommendation',
+        content:   markdown,
+        timestamp: new Date(),
+      };
+
+      setMessages(prev => [...prev, recMsg]);
+      persistMessage(convId, recMsg);
+
+      // Bubble conversation to top
+      setConversations(prev =>
+        prev
+          .map(c => c.id === convId ? { ...c, updated_at: Date.now() } : c)
+          .sort((a, b) => b.updated_at - a.updated_at)
+      );
+    } catch (err) {
+      const errMsg = {
+        id:        crypto.randomUUID(),
+        role:      'assistant',
+        type:      'text',
+        content:   `⚠️ **Recommendation failed:** ${err.message}`,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errMsg]);
+      persistMessage(convId, errMsg);
+    } finally {
+      setIsLoading(false);
+      setExecutionStep('');
+    }
+  }
+
   // ── Derive header title from active conversation ───────────────────────────
   const activeTitle = conversations.find(c => c.id === activeConvId)?.title ?? null;
+  const canRecommend = messages.some(m => m.type === 'data_block');
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-black font-sans p-3 gap-3">
@@ -320,6 +366,8 @@ export default function App() {
           onSend={handleSend}
           isLoading={isLoading}
           executionStep={executionStep}
+          onRecommend={handleRecommend}
+          canRecommend={canRecommend}
         />
       </main>
     </div>

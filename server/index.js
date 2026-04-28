@@ -6,10 +6,13 @@ import {
   buildDBManagerSystem,
   buildVisualizerSystem,
   buildVizModifierSystem,
+  buildRecommendationSystem,
   applyGatekeeper,
   isNumericValue,
   callOllama,
+  callOllamaRaw,
 } from './agents.js';
+
 
 const app = express();
 const PORT = 3001;
@@ -408,12 +411,35 @@ function rebuildCategoricalData(chartConfig, columns, rawRows) {
     console.warn('[RebuildData] No suitable label column found, using index 0 as fallback.');
   }
 
-  // Find all numeric column indices (excluding the label)
-  const numericIdxs = columns
+  // ── Find all numeric column indices ────────────────────────────────────────
+  const YEAR_RE = /\byear\b/i;
+  
+  // First pass: try to exclude ID-like and Year-like columns so we don't plot them
+  let numericIdxs = columns
     .map((_col, i) => i)
-    .filter(i => i !== labelIdx && rawRows.slice(0, 3).some(row => isNumericValue(row[i])));
+    .filter(i => 
+      i !== labelIdx && 
+      !isIdCol(columns[i]) && 
+      !YEAR_RE.test(columns[i]) &&
+      rawRows.slice(0, 3).some(row => isNumericValue(row[i]))
+    );
+
+  // Fallback: if excluding IDs/Years left us with nothing, just take any numeric column
+  if (numericIdxs.length === 0) {
+    numericIdxs = columns
+      .map((_col, i) => i)
+      .filter(i => i !== labelIdx && rawRows.slice(0, 3).some(row => isNumericValue(row[i])));
+  }
 
   if (numericIdxs.length === 0) return chartConfig; // nothing to rebuild
+
+  const existingDs = chartConfig.datasets ?? [];
+
+  // If the LLM intentionally generated fewer datasets than we found numeric columns,
+  // assume it skipped the earlier ones and plotted the actual metrics at the end.
+  if (existingDs.length > 0 && numericIdxs.length > existingDs.length) {
+    numericIdxs = numericIdxs.slice(-existingDs.length);
+  }
 
   // Rebuild labels from SQL rows
   const newLabels = rawRows.map(row => {
@@ -423,9 +449,16 @@ function rebuildCategoricalData(chartConfig, columns, rawRows) {
   });
 
   // Rebuild datasets — preserve LLM styling, replace data
-  const existingDs = chartConfig.datasets ?? [];
   const newDatasets = numericIdxs.map((colIdx, dsIdx) => {
+    // If we have an exact matching dataset from the LLM, use its styling.
+    // Otherwise, copy colors from the first dataset but use the real column name.
+    const hasOwnStyle = dsIdx < existingDs.length;
     const existingStyle = existingDs[dsIdx] ?? existingDs[0] ?? {};
+    
+    const label = (hasOwnStyle && existingStyle.label)
+      ? existingStyle.label 
+      : columns[colIdx];
+
     const newData = rawRows.map(row => {
       const v = row[colIdx];
       return isNumericValue(v) ? Number(v) : 0;
@@ -444,8 +477,8 @@ function rebuildCategoricalData(chartConfig, columns, rawRows) {
 
     return {
       ...existingStyle,
-      label: existingStyle.label ?? columns[colIdx],
-      data:  newData,
+      label,
+      data: newData,
       ...(bg ? { backgroundColor: bg } : {}),
     };
   });
@@ -1050,8 +1083,99 @@ app.post('/api/chat', async (req, res) => {
 });
 
 
+// ── Business Recommendation Agent ───────────────────────────────────────────
+// POST /api/recommend
+// Body: { history: [...messages] }
+// Streams SSE events:
+//   event: step   data: { label: "..." }
+//   event: result data: { type: "recommendation", markdown: "..." }
+//   event: error  data: { message: "..." }
+//
+// Builds a compact analytics-session context from history and asks the
+// Recommendation Agent to produce a structured Markdown memo.
+app.post('/api/recommend', async (req, res) => {
+  const { history = [] } = req.body ?? {};
+
+  // Need at least one data block to make a meaningful recommendation
+  const dataBlocks = history.filter(m => m.type === 'data_block');
+  if (dataBlocks.length === 0) {
+    return res.status(400).json({
+      error: 'No data analysis found in this conversation yet. Ask at least one data question first.',
+    });
+  }
+
+  // Open SSE stream
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.flushHeaders();
+
+  try {
+    sseWrite(res, 'step', { label: 'Synthesising analytics session...' });
+
+    // ── Build a compact, structured context string ────────────────────────────
+    // We pull: user questions, SQL queries, chart types, and insight summaries.
+    // Raw rows are explicitly excluded — only the summaries matter here.
+    const turns = [];
+
+    // Walk through history pairs: find each user question and its following data block
+    for (let i = 0; i < history.length; i++) {
+      const m = history[i];
+
+      if (m.role === 'user' && m.content) {
+        const question = m.content.trim();
+
+        // Look ahead for the immediately following assistant data block
+        const next = history[i + 1];
+        if (next?.role === 'assistant' && next.type === 'data_block') {
+          const chartType  = next.vizJson?.type ?? next.chartConfig?.type ?? 'unknown';
+          const chartTitle = next.vizJson?.title ?? next.chartConfig?.title ?? '';
+          const summary    = next.content ?? '';
+          const sql        = (next.sql ?? '').slice(0, 300); // cap SQL length
+
+          turns.push(
+            `### Question\n${question}\n` +
+            `**Insight:** ${summary}\n` +
+            `**Visualization:** ${chartTitle || chartType} (${chartType} chart)\n` +
+            `**SQL (excerpt):** \`${sql}\``
+          );
+        } else if (next?.role === 'assistant' && next.type === 'text' && next.content) {
+          // Text-only response (no chart)
+          turns.push(
+            `### Question\n${question}\n` +
+            `**Response:** ${next.content.trim().slice(0, 300)}`
+          );
+        }
+      }
+    }
+
+    const conversationContext = turns.length > 0
+      ? turns.join('\n\n---\n\n')
+      : 'No structured turns found — use the overall conversation to infer findings.';
+
+    // ── Call the Recommendation Agent ────────────────────────────────────────
+    sseWrite(res, 'step', { label: 'Writing business recommendation...' });
+    console.log(`[Recommend] Building recommendation from ${turns.length} turns.`);
+
+    const systemPrompt = buildRecommendationSystem(conversationContext);
+    const markdown     = await callOllamaRaw(
+      systemPrompt,
+      'Generate the business recommendation memo based on the analytics session above.',
+    );
+
+    sseWrite(res, 'result', { type: 'recommendation', markdown });
+    res.end();
+
+  } catch (err) {
+    console.error('[Recommend] Error:', err.message);
+    sseWrite(res, 'error', { message: err.message });
+    res.end();
+  }
+});
+
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`[Server] QueryFlow API running at http://localhost:${PORT}`);
-  console.log(`[Server] Endpoints: /api/health  /api/tables  /api/query  /api/chat  /api/adjust-viz`);
+  console.log(`[Server] Endpoints: /api/health  /api/tables  /api/query  /api/chat  /api/adjust-viz  /api/recommend`);
 });

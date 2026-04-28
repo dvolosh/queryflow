@@ -1,8 +1,8 @@
 import React from 'react';
-import { Sparkles, HelpCircle } from 'lucide-react';
+import { Sparkles, HelpCircle, FileText } from 'lucide-react';
 import DataBlock from './DataBlock';
 
-// Minimal markdown-to-text renderer (bold + italic + line breaks)
+// ── Basic inline Markdown renderer (bold, italic, code, bullets) ──────────────
 function MarkdownText({ text }) {
   const lines = text.split('\n');
   return (
@@ -25,6 +25,124 @@ function MarkdownText({ text }) {
     </div>
   );
 }
+
+// ── Rich Markdown renderer for structured documents (h1–h3, lists, etc.) ─────
+function MarkdownDoc({ markdown }) {
+  const lines = markdown.split('\n');
+
+  const renderInline = (text) =>
+    text
+      .replace(/\*\*(.+?)\*\*/g, '<strong class="text-slate-100 font-semibold">$1</strong>')
+      .replace(/\*(.+?)\*/g,     '<em class="text-slate-300 italic">$1</em>')
+      .replace(/`(.+?)`/g,       '<code class="bg-slate-800 text-indigo-300 px-1.5 py-0.5 rounded text-xs font-mono border border-slate-700/50">$1</code>');
+
+  const elements = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      elements.push(<div key={i} className="h-2" />);
+      i++;
+      continue;
+    }
+
+    // H1
+    if (trimmed.startsWith('# ') && !trimmed.startsWith('## ')) {
+      elements.push(
+        <h1 key={i} className="text-lg font-bold text-slate-100 mt-1 mb-3 pb-2 border-b border-slate-700/60">
+          {trimmed.slice(2)}
+        </h1>
+      );
+      i++; continue;
+    }
+
+    // H2
+    if (trimmed.startsWith('## ') && !trimmed.startsWith('### ')) {
+      elements.push(
+        <h2 key={i} className="text-sm font-semibold text-slate-200 uppercase tracking-wider mt-4 mb-2 flex items-center gap-2">
+          <span className="w-3 h-0.5 bg-indigo-500 inline-block rounded-full" />
+          {trimmed.slice(3)}
+        </h2>
+      );
+      i++; continue;
+    }
+
+    // H3
+    if (trimmed.startsWith('### ')) {
+      elements.push(
+        <h3 key={i} className="text-sm font-medium text-slate-300 mt-3 mb-1">
+          {trimmed.slice(4)}
+        </h3>
+      );
+      i++; continue;
+    }
+
+    // Numbered list
+    if (/^\d+\.\s/.test(trimmed)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i].trim())) {
+        const text = lines[i].trim().replace(/^\d+\.\s/, '');
+        items.push(text);
+        i++;
+      }
+      elements.push(
+        <ol key={`ol-${i}`} className="space-y-1.5 my-2 ml-1">
+          {items.map((item, idx) => (
+            <li key={idx} className="flex gap-2.5 text-sm text-slate-300 leading-relaxed">
+              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-600/30 text-indigo-300 text-xs flex items-center justify-center font-semibold mt-0.5">
+                {idx + 1}
+              </span>
+              <span dangerouslySetInnerHTML={{ __html: renderInline(item) }} />
+            </li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    // Bullet list
+    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+      const items = [];
+      while (i < lines.length && (lines[i].trim().startsWith('- ') || lines[i].trim().startsWith('* '))) {
+        items.push(lines[i].trim().slice(2));
+        i++;
+      }
+      elements.push(
+        <ul key={`ul-${i}`} className="space-y-1.5 my-2 ml-1">
+          {items.map((item, idx) => (
+            <li key={idx} className="flex gap-2.5 text-sm text-slate-300 leading-relaxed">
+              <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-slate-500 mt-2" />
+              <span dangerouslySetInnerHTML={{ __html: renderInline(item) }} />
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    // Horizontal rule
+    if (trimmed === '---' || trimmed === '___' || trimmed === '***') {
+      elements.push(<hr key={i} className="border-slate-700/60 my-3" />);
+      i++; continue;
+    }
+
+    // Paragraph
+    elements.push(
+      <p
+        key={i}
+        className="text-sm text-slate-300 leading-relaxed"
+        dangerouslySetInnerHTML={{ __html: renderInline(trimmed) }}
+      />
+    );
+    i++;
+  }
+
+  return <div className="space-y-1">{elements}</div>;
+}
+
 
 function AssistantAvatar() {
   return (
@@ -142,6 +260,24 @@ export function TypingIndicator({ step }) {
         {step && (
           <span className="text-xs text-slate-500 font-medium">{step}</span>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Business Recommendation Message ──────────────────────────────────────────
+export function RecommendationMessage({ message }) {
+  const time = message.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return (
+    <div className="flex items-start gap-3 animate-fade-in">
+      <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+        <FileText size={13} className="text-white" />
+      </div>
+      <div className="flex-1 min-w-0 space-y-1">
+        <div className="bg-slate-800/40 border border-indigo-500/30 shadow-md shadow-indigo-500/5 backdrop-blur-sm rounded-2xl rounded-tl-sm px-6 py-5">
+          <MarkdownDoc markdown={message.content} />
+        </div>
+        <span className="text-xs text-slate-600 pl-1">{time}</span>
       </div>
     </div>
   );

@@ -315,3 +315,89 @@ export async function updateMessage(convId, message) {
 }
 
 
+/**
+ * Request a business recommendation memo from the Recommendation Agent.
+ * Streams SSE events; resolves with the final Markdown string.
+ *
+ * @param {object[]} history    - Full message history from App state
+ * @param {(label: string) => void} onStep - Progress callback
+ * @returns {Promise<string>}   - Markdown recommendation text
+ */
+export function getRecommendation(history, onStep) {
+  return new Promise(async (resolve, reject) => {
+    // Slim history: strip large vizJson data arrays — server only needs metadata
+    const slimHistory = history
+      .filter(m => m.id !== 'welcome')
+      .map(m => ({
+        id:      m.id,
+        role:    m.role,
+        type:    m.type,
+        content: m.content,
+        ...(m.sql ? { sql: m.sql.slice(0, 400) } : {}),
+        // Send only chart type and title — not the full vizJson with data arrays
+        ...(m.vizJson ? {
+          vizJson: { type: m.vizJson.type, title: m.vizJson.title },
+        } : {}),
+        ...(m.chartConfig ? {
+          chartConfig: { type: m.chartConfig.type, title: m.chartConfig.title },
+        } : {}),
+      }));
+
+    let res;
+    try {
+      res = await fetch(`${BASE}/recommend`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ history: slimHistory }),
+      });
+    } catch (err) {
+      return reject(new Error(`Network error: ${err.message}`));
+    }
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return reject(new Error(data.error ?? `Recommend request failed: ${res.status}`));
+    }
+
+    if (!res.body) {
+      return reject(new Error('No response body from /api/recommend'));
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+
+    function processBuffer() {
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        let event = 'message';
+        let data  = '';
+        for (const line of part.split('\n')) {
+          if (line.startsWith('event: ')) event = line.slice(7).trim();
+          else if (line.startsWith('data: ')) data = line.slice(6).trim();
+        }
+        if (!data) continue;
+        let parsed;
+        try { parsed = JSON.parse(data); } catch { continue; }
+        if (event === 'step')        onStep?.(parsed.label);
+        else if (event === 'result') resolve(parsed.markdown ?? '');
+        else if (event === 'error')  reject(new Error(parsed.message));
+      }
+    }
+
+    async function pump() {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          processBuffer();
+        }
+      } catch (err) { reject(err); }
+    }
+
+    pump();
+  });
+}
