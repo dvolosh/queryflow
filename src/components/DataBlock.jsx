@@ -84,6 +84,7 @@ function SQLBlock({ code }) {
 function normaliseDatasets(chartType, datasets = []) {
   const isLine    = chartType === 'line';
   const isScatter = chartType === 'scatter';
+  const isBoxplot = chartType === 'boxplot';
 
   return datasets.map(ds => {
     // Resolve whichever color the model provided
@@ -118,6 +119,26 @@ function normaliseDatasets(chartType, datasets = []) {
         borderColor:          color,
         // Semi-transparent fill so dots are visible without being too heavy
         backgroundColor:      bg ? (bg + 'cc') : (color + 'cc'),
+      };
+    }
+
+    if (isBoxplot) {
+      // chartjs-chart-boxplot uses its own set of visual properties.
+      // A solid opaque fill makes the box look like a plain rectangle —
+      // use a semi-transparent fill so the whiskers and median are legible.
+      const solidColor = (typeof bg === 'string' && bg) ? bg : '#6366f1';
+      // Strip alpha if hex already has 8 chars, then append 55 (~33% opacity)
+      const baseHex    = solidColor.length === 9 ? solidColor.slice(0, 7) : solidColor;
+      return {
+        ...ds,
+        backgroundColor:  baseHex + '55',   // box fill — semi-transparent
+        borderColor:      baseHex,           // box outline + whisker lines
+        borderWidth:      ds.borderWidth   ?? 2,
+        medianColor:      '#f8fafc',         // white median line — always visible
+        outlierRadius:    ds.outlierRadius  ?? 4,
+        outlierColor:     baseHex,
+        meanRadius:       0,                 // hide mean dot by default
+        itemRadius:       0,                 // hide individual data points
       };
     }
 
@@ -226,6 +247,8 @@ function ChartRenderer({ chartConfig, height = 280, lightBg = false }) {
             },
             y: {
               type:        isScatter ? 'linear' : (isHorizontal ? 'category' : 'linear'),
+              // For boxplots, don't force beginAtZero — let Chart.js pick a sensible
+              // range so the box and whiskers fill the axis nicely.
               ...(isBoxplot ? {} : { beginAtZero: yBeginZero }),
               ticks:       { color: T.tickColor, font: { size: 11 } },
               grid:        { color: T.gridColor },

@@ -237,13 +237,29 @@ export async function saveMessage(convId, message) {
 
   // vizJson is persisted so that the Viz Modifier can pick it up
   // from history when the conversation is reloaded.
+  //
+  // tableData.rows are NOT persisted — they can be thousands of raw rows
+  // (e.g. a boxplot with 3503 entries) and would cause PayloadTooLargeError.
+  // The chart is fully encoded in vizJson; we only keep the metadata fields
+  // (columns, rowCount, elapsed) so the stats pill renders correctly on reload.
   const PAYLOAD_KEYS = [
     'sql', 'tableData', 'chartConfig', 'vizJson',
     'clarificationOptions', 'originalQuestion',
   ];
   const payload = {};
   for (const key of PAYLOAD_KEYS) {
-    if (message[key] !== undefined) payload[key] = message[key];
+    if (message[key] === undefined) continue;
+    if (key === 'tableData' && message.tableData) {
+      // Strip raw rows — keep only the lightweight metadata
+      payload.tableData = {
+        columns:  message.tableData.columns,
+        rowCount: message.tableData.rowCount ?? message.tableData.rows?.length ?? 0,
+        elapsed:  message.tableData.elapsed,
+        rows:     [],   // empty — chart data lives in vizJson
+      };
+    } else {
+      payload[key] = message[key];
+    }
   }
 
   await fetch(`${BASE}/conversations/${convId}/messages`, {
@@ -260,6 +276,7 @@ export async function saveMessage(convId, message) {
   });
 }
 
+
 /**
  * Update the payload of an EXISTING message row (used after viz tweaks).
  * Only the `payload` column (vizJson, chartConfig, sql, tableData, etc.) is
@@ -275,7 +292,17 @@ export async function updateMessage(convId, message) {
   ];
   const payload = {};
   for (const key of PAYLOAD_KEYS) {
-    if (message[key] !== undefined) payload[key] = message[key];
+    if (message[key] === undefined) continue;
+    if (key === 'tableData' && message.tableData) {
+      payload.tableData = {
+        columns:  message.tableData.columns,
+        rowCount: message.tableData.rowCount ?? message.tableData.rows?.length ?? 0,
+        elapsed:  message.tableData.elapsed,
+        rows:     [],
+      };
+    } else {
+      payload[key] = message[key];
+    }
   }
 
   await fetch(`${BASE}/conversations/${convId}/messages/${message.id}`, {
@@ -286,4 +313,5 @@ export async function updateMessage(convId, message) {
     }),
   });
 }
+
 
